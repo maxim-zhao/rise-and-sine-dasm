@@ -11,6 +11,9 @@ BANKS 1
 .enum $C000 export
 RAM_SineTable1 dsb 256
 RAM_SineTable2 dsb 256
+RAM_SpriteTableYs dsb 64
+RAM_SpriteTableGap dsb 64
+RAM_SpriteTableXNs dsb 64*2
 .ende
 
 ; Ports
@@ -131,16 +134,18 @@ WaitForVBlank:
 	jr nz, WaitForVBlank
 
 	; We are on line $c1, which is vblank.
+
+EmitTilemap:
 	; Point the VDP at the tilemap, ready to write
 	; Low address byte is a = 0
 	rst HalfSetVDPAddress
 	ld a, >TileMapAddress | $40
 	rst HalfSetVDPAddress
 
-	; Emit 
+	; Emit tilemap from the previous frame
 	ld h, $C3 ; $c3e0 is initially uninitialized, we fill it in later
 --:
-	ld l, $E0 ; = -32 - why? TODO
+	ld l, $E0 ; = -32 - because each tilemap row has 32 entries and thus allows us to check l = 0 when producing it later
 	ld b, 32 ; column count
 	xor a ; High byte of each tilemap entry is 0 -> we just pick tiles from 0 to 256
 -:	; Emit 32 tilemap entries from (hl) for one row.
@@ -155,17 +160,18 @@ WaitForVBlank:
 	cp $c3 + 24 ; $DB
 	jr nz, --
 
-	; Write three more rows of tilemap data from the sine table
-	ld h, >RAM_SineTable2 ; $C2
-	ld b, 32*2*3 ; $C0
+EmitSpriteTable:
+	ld h, >RAM_SpriteTableYs
+	ld b, 64 * 3 ; We want the Ys, gap and XNs. More sprites would require copying more here. 
 -:  outi
 	jr nz, -
 
+ComputeNextFrameTilemap:
 	; Now b=0
 	inc b ; so it is 1? c = Port_VDPData = $be
-	; ix is unset, so what does this do? Some sort of arbitrary-start counter, counting up by $01.be
+	; ix is uninitialised, so acts as an arbitrary-start fixed-point counter, counting up by $01.be each frame
 	add ix, bc
-	; iy is unset, so what does this do? Some sort of arbitrary-start counter, counting up by $01.00
+	; iy is similarly counted, by $01.00 each frame
 	inc iyh
 
 	; Point de to the ix'th byte of the doubled sine table
@@ -179,74 +185,94 @@ WaitForVBlank:
 		ld d, $C3 ; de' = $c3e0 at first
 --:
 		push hl ; Save hl'
-		ld e, $E0 ; de' = $xxe0
+			ld e, $E0 ; de' = $xxe0
 	exx
-	; Read from de = sin(ix)
+	; Read from de: a = sin(ix)
 	ld a, (de)
 	; Move de on by 2 entries
 	inc e
 	inc e
-	; Add from hl = sin(t)
+	; Add from hl: a += sin(t)
 	add a, (hl)
 	; Move on by 1 entry
 	inc l
 	exx
-		ld b, a ; b' = sin(ix) + sin(iy)
+			ld b, a ; b' = sin(ix) + sin(t)
 -:
-		ld a, (hl) ; a = sin(iy)
-		add a, b
-		inc l
-		inc l
-		ld (de), a
-		inc e
-		jr nz, -
-		pop hl
+			ld a, (hl) ; a = sin(iy)
+			add a, b ; a = sin(iy) + sin(ix) + sin(t)
+			inc l ; Move hl on by two entries
+			inc l
+			ld (de), a ; Save to the buffer at $c3e0+, then $c4e0+, ...
+			inc e
+			jr nz, - ; loop up to $xxff -> 32 entries
+		pop hl ; restore hl'
+		; Select next 32-entry chunk
 		inc d
+		; Loop until we've done 24 rows
 		ld a, d
-		cp $DB
+		cp $c3 + 24 ; $DB
 		jr nz, --
-		ld l, e
-		inc h
-		ld d, $C0
+
+ComputeNextFrameSpriteTable:
+		; Now the tilemap is done, we move onto the sprites
+
+		; hl is left pointing into RAM_SineTable2; we move it on to RAM_SpriteTableYs
+		ld l, e ; zero
+		inc h 
+		; Point de at the iy'th entry of RAM_SineTable1
+		ld d, >RAM_SineTable1 ; $C0
 		ld e, iyh
+		; Read that in
 		ld a, (de)
 		ld e, a
-		ld b, $20
--:
-		ld a, (de)
-		add a, $20
+		ld b, 32 ; Sprite count
+-:		; Read in a Y coordinate
+		ld a, (de) 
+		; Add 32 because we are already in active display now; this shifts sprites down to after they are defined (!)
+		add a, $20 
+		; Save in the sprite table
 		ld (hl), a
+		; Add 16 to e, to offset each sprite from the previous one and spread them around the sine cycle
 		ld a, e
-		add a, $10
+		add a, 16 ; aka 256 entries / 32 sprites * 2 to make two loops total
 		ld e, a
 		inc l
 		djnz -
+		; Add a terminator to the sprite table
 		ld (hl), $D0
 	exx
+
+	; Re-get our state counter into l
 	ld a, ixh
 	ld l, a
-	ld de, $C018
+	ld de, >RAM_SineTable1 | $18 ; $18 is the stepping through the sine table for sprite Xs
 	exx
-	ld l, $80
-	ld b, $20
+		; Point to the second half of the sprite table
+		ld l, <RAM_SpriteTableXNs 
+		ld b, 32 ; Sprite count
 -:
-	ld a, (de)
+		ld a, (de) ; Read the sprite Y again
 	exx
-	ld h, d
+	ld h, d ; So now a = (hl) = sin(ix)
 	add a, (hl)
-	add hl, de
-	srl a
+	add hl, de ; Move hl on by $18. The high byte moved too but we don't care
+	srl a ; Divide the x value by 2, so it's 0..127
 	exx
-	sub d
-	ld (hl), a
-	inc l
-	ld a, e
-	add a, $08
-	ld e, a
-	ld (hl), $80
-	inc l
-	djnz -
-	jp WaitForVBlank
+		sub d ; d is always $c0 do this is adding 64, making it centred horiontally
+		; Save the X coordinate to the sprite table
+		ld (hl), a
+		inc l
+		; Move our sine table counter on by 8, which is enough for one loop total
+		ld a, e
+		add a, $08
+		ld e, a
+		; Also choose tile $80 for every sprite
+		ld (hl), $80
+		; Repeat for 32 sprites
+		inc l
+		djnz -
+		jp WaitForVBlank
 
 HeartBitmap:
 .db %01101100 ; $6c
