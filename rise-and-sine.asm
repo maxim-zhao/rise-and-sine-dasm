@@ -1,6 +1,7 @@
 .MEMORYMAP
 SLOTSIZE 255
 SLOT 0 $0000
+DEFAULTSLOT 0
 .ENDME
 .ROMBANKMAP
 BANKSTOTAL 1
@@ -23,12 +24,15 @@ RAM_SpriteTableXNs dsb 64*2
 ; Input Ports
 .define Port_VCounter $7E
 
+; Helper function for combining bytes to words
+.function word(hi, lo) ((hi & 0xff) << 8) | (lo & 0xff)
+
 .BANK 0 SLOT 0
 .ORG $0000
 
 boot:
 	di
-	ld de, $00FE ; Initial quadratic gradient = -2/256
+	ld de, word(0, -2) ; $00FE ; Initial quadratic gradient as 8.8 fixed-point = -2/256
 	ld h, d ; hl = fixed-point sine result = 0
 	ld l, d
 	jr +
@@ -39,7 +43,7 @@ HalfSetVDPAddress:
 	; This saves a few bytes as we can otir b bytes after calling it,
 	; but the value 18 is only useful once.
 	out (Port_VDPAddress), a
-	ld bc, (_sizeof_Palette << 8) | Port_VDPData
+	ld bc, word(_sizeof_Palette, Port_VDPData)
 	ret
 
 +:
@@ -246,7 +250,7 @@ ComputeNextFrameSpriteTable:
 	; Re-get our state counter into l
 	ld a, ixh
 	ld l, a
-	ld de, >RAM_SineTable1 | $18 ; $18 is the stepping through the sine table for sprite Xs
+	ld de, word(>RAM_SineTable1, $18) ; $18 is the stepping through the sine table for sprite Xs
 	exx
 		; Point to the second half of the sprite table
 		ld l, <RAM_SpriteTableXNs 
@@ -290,7 +294,7 @@ Palette:
 ; Followed by the VDP register data
 RegisterData:
 .define TileMapAddress $3800 ; Normal location
-.define SpriteTableAddress $3f00 ; Normal location
+.define SpriteTableAddress $3e00 ; Lower than normal, so it comes immediately after the visible tilemap
 .define SpriteSet 0 ; Use lower 256 tiles for sprites
 .db %00000100,$80
 ;    |||||||`- Disable sync

@@ -1,0 +1,4 @@
+*.sms
+linkfile
+*.sym
+*.o
