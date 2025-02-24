@@ -107,7 +107,7 @@ LoadTiles:
 --:
 	ld b, 4 ; Bitplanes
 	ld e, d ; Bitplane mask from current value in d
-	nop ; Not needed? TODO check
+	nop ; Not needed, not sure why this is here
 -:
 	rl e ; Rotate mask bits in as colour selectors
 	sbc a, a ; Make 0 or -1 from high bit in e
@@ -158,7 +158,8 @@ EmitTilemap:
 	ld b, 32 ; column count
 	xor a ; High byte of each tilemap entry is 0 -> we just pick tiles from 0 to 256
 -:	; Emit 32 tilemap entries from (hl) for one row.
-	; The code is duplicated in the loop, perhaps for speed?
+	; The code is duplicated in the loop, for speed: we run out of VBlank time if we don't.
+	; We could go faster with more unrolling if we had space...
 	outi
 	out (Port_VDPData), a
 	outi
@@ -177,11 +178,13 @@ EmitSpriteTable:
 
 ComputeNextFrameTilemap:
 	; Now b=0
-	inc b ; so it is 1? c = Port_VDPData = $be
+	inc b ; so it is 1; c = Port_VDPData = $be
 	; ix is uninitialised, so acts as an arbitrary-start fixed-point counter, counting up by $01.be each frame
 	add ix, bc
 	; iy is similarly counted, by $01.00 each frame
 	inc iyh
+	; We make use of the fact that ix and iy are unaffected by the exx opcode, so we can apply these
+	; to both sets of registers below.
 
 	; Point de to the ix'th byte of the doubled sine table
 	ld hl, RAM_SineTable2
@@ -276,7 +279,7 @@ ComputeNextFrameSpriteTable:
 		ld a, e
 		add a, $08
 		ld e, a
-		; Also choose tile $80 for every sprite
+		; Also choose tile $80 for every sprite. This maps to the white entry in the sprite palette.
 		ld (hl), $80
 		; Repeat for 32 sprites
 		inc l
@@ -294,7 +297,9 @@ HeartBitmap:
 .db %00000000 ; $00
 ; Followed by the palette data
 Palette:
+; Cyclic palette for the bacjground. This has some duplicates!
 .db $00, $0B, $31, $31, $20, $23, $23, $20, $10, $17, $32, $30, $30, $32, $17, $10
+; Black borders, white sprites
 .db $00, $3F
 ; Followed by the VDP register data
 RegisterData:
