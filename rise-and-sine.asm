@@ -32,6 +32,7 @@ RAM_SpriteTableXNs dsb 64*2
 
 boot:
 	di
+MakeSineTablesPart1:
 	ld de, word(0, -2) ; $00FE ; Initial quadratic gradient as 8.8 fixed-point = -2/256
 	ld h, d ; hl = fixed-point sine result = 0
 	ld l, d
@@ -46,6 +47,7 @@ HalfSetVDPAddress:
 	ld bc, word(_sizeof_Palette, Port_VDPData)
 	ret
 
+MakeSineTablesPart2:
 +:
 	; Fill tables from $c000 to $c1ff with sine curves.
 	; See https://github.com/neonz80/sine for an alternative explanation.
@@ -86,6 +88,7 @@ HalfSetVDPAddress:
 	inc c
 	jr nz, - ; repeat for 256 entries
 
+LoadTiles:
 	; At the end, hl = $ff00
 
 	; Set VDP address to $4000
@@ -118,13 +121,15 @@ HalfSetVDPAddress:
 	
 	inc d ; Next mask
 	jr nz, ---
-
+LoadPalette:
 	; Set the VDP to the palette
 	rst HalfSetVDPAddress
 	ld a, $C0
 	rst HalfSetVDPAddress
 	; Load the palette as 18 colours (since HalfSetVDPAddress left b=18)
 	otir
+
+LoadRegisters:
 	; Then increment the port number to set the VDP registers
 	inc c
 	; Then load the register values
