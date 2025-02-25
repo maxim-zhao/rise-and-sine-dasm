@@ -17,6 +17,10 @@ RAM_SpriteTableGap dsb 64
 RAM_SpriteTableXNs dsb 64*2
 .ende
 
+.enum $C3E0 export
+RAM_TilemapStart dsb 32
+.ende
+
 ; Ports
 .define Port_VDPData $BE
 .define Port_VDPAddress $BF
@@ -152,9 +156,13 @@ EmitTilemap:
 	rst HalfSetVDPAddress
 
 	; Emit tilemap from the previous frame
-	ld h, $C3 ; $c3e0 is initially uninitialized, we fill it in later
+	; The tilemap data is stored as 32 bytes, every 256 bytes from $c3e0.
+	; This allows us to increment the high byte between rows, and use the 
+	; low byte of the address as the loop counter for rows, as it will
+	; be zero when we reach the end of each row.
+	ld h, >RAM_TilemapStart
 --:
-	ld l, $E0 ; = -32 - because each tilemap row has 32 entries and thus allows us to check l = 0 when producing it later
+	ld l, <RAM_TilemapStart ; = -32 - because each tilemap row has 32 entries and thus allows us to check l = 0 when producing it later
 	ld b, 32 ; column count
 	xor a ; High byte of each tilemap entry is 0 -> we just pick tiles from 0 to 256
 -:	; Emit 32 tilemap entries from (hl) for one row.
@@ -167,14 +175,16 @@ EmitTilemap:
 	jr nz, -
 	; Repeat until we have output 24*2 rows
 	ld a, h
-	cp $c3 + 24 ; $DB
+	cp >RAM_TilemapStart + 24 ; $DB
 	jr nz, --
 
 EmitSpriteTable:
-	ld h, >RAM_SpriteTableYs
+	ld h, >RAM_SpriteTableYs ; l is 0
 	ld b, 64 * 3 ; We want the Ys, gap and XNs. More sprites would require copying more here. 
 -:  outi
-	jr nz, -
+	jr nz, - ; 28 cycles loop = frame safe
+	; We waste some frame time copying the 64 bytes "sprite table gap" to VRAM because
+	; it would cost about 12 bytes more to skip it, but save about 8 lines.
 
 ComputeNextFrameTilemap:
 	; Now b=0
@@ -194,10 +204,10 @@ ComputeNextFrameTilemap:
 		ld h, >RAM_SineTable2 ; hl' = iy'th byte of the doubled sine table
 		ld a, iyh
 		ld l, a
-		ld d, $C3 ; de' = $c3e0 at first
+		ld d, >RAM_TilemapStart ; de' = $c3e0 at first
 --:
 		push hl ; Save hl'
-			ld e, $E0 ; de' = $xxe0
+			ld e, <RAM_TilemapStart ; de' = $xxe0
 	exx
 	; Read from de: a = sin(ix)
 	ld a, (de)
@@ -223,7 +233,7 @@ ComputeNextFrameTilemap:
 		inc d
 		; Loop until we've done 24 rows
 		ld a, d
-		cp $c3 + 24 ; $DB
+		cp >RAM_TilemapStart + 24 ; $DB
 		jr nz, --
 
 ComputeNextFrameSpriteTable:
