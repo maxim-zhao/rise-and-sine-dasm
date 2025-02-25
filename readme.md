@@ -8,3 +8,9 @@ This is a disassembly of it that I made in order to understand how it works. The
 Here's a graphical breakdown of the ROM use:
 
 ![](map.png)
+
+Here's a graphical breakdown of the frame time use:
+
+![](frame-time.png)
+
+It's very close to the limit! I was unable to find any significant speed optimisations.
